@@ -10,8 +10,13 @@ Requirements:
     pip install requests beautifulsoup4 openpyxl --break-system-packages
 
 Usage:
+    $env:TSDR_PROXY_USERNAME = "your-webshare-username"
+    $env:TSDR_PROXY_PASSWORD = "your-webshare-password"
     python tsdr_scraper.py serials.xlsx
     python tsdr_scraper.py serials.csv
+
+The ten Webshare IP:port proxies shown in the dashboard are used as a
+randomized pool. Credentials are read from environment variables.
 """
 
 import csv
@@ -23,38 +28,31 @@ import random
 import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
+from urllib.parse import quote
 
 import requests
 from bs4 import BeautifulSoup
 
 # ===================== CONFIG =====================
 
-# Webshare proxy pool - dashboard ki saari "Working" proxies yahan daal do.
-# Har request ke liye inme se random proxy pick hoga (rotation), taake
-# ek hi IP par load na pade aur speed better rahe.
+# Webshare proxy pool. Har request par random IP select hota hai.
 PROXY_LIST = [
-    # "http://xwrwijzc:80ny9padfvhf@31.59.20.176:6754/",
-    # "http://xwrwijzc:80ny9padfvhf@45.38.107.97:6014/",
-    # "http://xwrwijzc:80ny9padfvhf@64.137.96.74:6641/",
-    # "http://xwrwijzc:80ny9padfvhf@198.23.243.226:6361/",
-    # "http://xwrwijzc:80ny9padfvhf@38.154.185.97:6370/",
-    # "http://xwrwijzc:80ny9padfvhf@84.247.60.125:6095/",
-    # "http://xwrwijzc:80ny9padfvhf@142.111.67.146:5611/",
-    # "http://xwrwijzc:80ny9padfvhf@191.96.254.138:6185/",
-    # "http://xwrwijzc:80ny9padfvhf@31.58.9.4:6077/",
-    # "http://xwrwijzc:80ny9padfvhf@198.46.161.42:5092/",
-
-    "http://ofbkpeow:jcjfjfc7o4em@31.59.20.176:6754/",
-    "http://ofbkpeow:jcjfjfc7o4em@45.38.107.97:6014/",
-    "http://ofbkpeow:jcjfjfc7o4em@64.137.96.74:6641/",
-    "http://ofbkpeow:jcjfjfc7o4em@198.23.243.226:6361/",
-    "http://ofbkpeow:jcjfjfc7o4em@38.154.185.97:6370/",
-    "http://ofbkpeow:jcjfjfc7o4em@84.247.60.125:6095/",
-    "http://ofbkpeow:jcjfjfc7o4em@142.111.67.146:5611/",
-    "http://ofbkpeow:jcjfjfc7o4em@191.96.254.138:6185/",
-    "http://ofbkpeow:jcjfjfc7o4em@31.58.9.4:6077/",
-    "http://ofbkpeow:jcjfjfc7o4em@198.46.161.42:5092/",
+    ("31.59.20.176", "6754"),
+    ("45.38.107.97", "6014"),
+    ("64.137.96.74", "6641"),
+    ("198.23.243.226", "6361"),
+    ("38.154.185.97", "6370"),
+    ("84.247.60.125", "6095"),
+    ("142.111.67.146", "5611"),
+    ("191.96.254.138", "6185"),
+    ("31.58.9.4", "6077"),
+    ("198.46.161.42", "5092"),
 ]
+
+# Credentials environment variables mein rakho; source code ya git history
+# mein password save mat karo.
+PROXY_USERNAME = os.getenv("TSDR_PROXY_USERNAME", "akzqqhnr")
+PROXY_PASSWORD = os.getenv("TSDR_PROXY_PASSWORD", "1k5hw8ogi3os")
 
 USE_PROXY = True           # False karo agar proxy use nahi karna
 CONCURRENT_WORKERS = 6     # ek sath kitni requests parallel chalein (5-10 rakho)
@@ -97,6 +95,20 @@ def get_session():
         s.trust_env = False
         _thread_local.session = s
     return _thread_local.session
+
+
+def get_proxy_url():
+    """Build the authenticated rotating proxy URL from environment settings."""
+    if not PROXY_USERNAME or not PROXY_PASSWORD:
+        raise RuntimeError(
+            "Proxy credentials missing. Set TSDR_PROXY_USERNAME and "
+            "TSDR_PROXY_PASSWORD before starting the scraper."
+        )
+
+    host, port = random.choice(PROXY_LIST)
+    username = quote(PROXY_USERNAME, safe="")
+    password = quote(PROXY_PASSWORD, safe="")
+    return f"http://{username}:{password}@{host}:{port}"
 
 
 CSV_LOCK = threading.Lock()  # CSV files mein ek waqt mein ek hi thread likhega
@@ -154,7 +166,7 @@ def fetch_tsdr_page(serial):
 
     last_error = None
     for attempt in range(1, MAX_RETRIES + 1):
-        proxy_url = random.choice(PROXY_LIST) if USE_PROXY else None
+        proxy_url = get_proxy_url() if USE_PROXY else None
         proxies = {"http": proxy_url, "https": proxy_url} if proxy_url else None
 
         try:
@@ -544,6 +556,13 @@ def main():
     if not serials:
         print("Koi valid serial nahi mila. File check karo.")
         sys.exit(1)
+
+    if USE_PROXY:
+        try:
+            get_proxy_url()
+        except RuntimeError as e:
+            print(f"Proxy configuration error: {e}")
+            sys.exit(1)
 
     valid_count = 0
     missing_count = 0
